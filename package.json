@@ -1,0 +1,9 @@
+{
+  "name": "liangqi-brawl-online",
+  "version": "1.0.0",
+  "private": true,
+  "description": "兩棲大亂鬥 WebSocket online multiplayer prototype",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}

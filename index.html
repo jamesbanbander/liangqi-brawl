@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>兩棲大亂鬥</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#173c35;color:#fff;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;text-align:center}
+header{padding:10px}h1{margin:4px;font-size:clamp(22px,4vw,34px)}.sub{font-size:13px;opacity:.85}
+main{max-width:1000px;margin:auto;padding:8px}canvas{display:block;width:100%;height:auto;aspect-ratio:16/9;background:#9bdc91;border:4px solid #f4e4a5;border-radius:14px;touch-action:none}
+.toolbar{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:10px}.toolbar button,.pad button{border:0;border-radius:12px;padding:10px 14px;font-weight:700;background:#f5e8ad;color:#24433a}
+.hud{display:flex;justify-content:space-between;gap:10px;margin:8px 0;font-weight:700}.p1{color:#baff79}.p2{color:#ffd7a0}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:12px}.pad{background:#24564b;border-radius:14px;padding:10px;display:flex;justify-content:center;gap:7px;flex-wrap:wrap}.pad button{min-width:48px;min-height:46px;font-size:16px;touch-action:none}.pad .attack{background:#ffca78}.note{font-size:12px;opacity:.8;margin:10px}
+</style>
+</head>
+<body>
+<header><h1>🐸 兩棲大亂鬥</h1><div class="sub">原版綠色青蛙模型修正版｜頭身連接・雙人可操作</div></header>
+<main>
+<div class="toolbar"><button id="single">單人闖關</button><button id="versus">雙人對戰</button><button id="restart">重新開始</button><button id="online">🌐 線上對戰</button><input id="roomCode" maxlength="12" placeholder="房間代碼" style="width:110px;padding:8px;border-radius:8px"><span id="netStatus">尚未連線</span><label style="display:flex;align-items:center;gap:6px">P1角色 <select id="char1"><option value="forest">森林青蛙</option><option value="bull">重裝牛蛙</option><option value="dart">箭毒蛙</option></select></label><label style="display:flex;align-items:center;gap:6px">P2角色 <select id="char2"><option value="forest">森林青蛙</option><option value="bull">重裝牛蛙</option><option value="dart">箭毒蛙</option></select></label></div>
+<div class="hud"><span class="p1" id="hp1">P1 💚 100</span><span id="status">雙人對戰：開始！</span><span class="p2" id="hp2">P2 💚 100</span></div>
+<canvas id="game" width="960" height="540"></canvas>
+<div class="controls">
+ <div class="pad"><b style="width:100%;color:#baff79">玩家 1</b><button data-key="a">◀</button><button data-key="w">跳躍</button><button data-key="d">▶</button><button class="attack" data-key="f">舌頭攻擊</button><button data-key="g">閃避 G</button></div>
+ <div class="pad"><b style="width:100%;color:#ffd7a0">玩家 2</b><button data-key="arrowleft">◀</button><button data-key="arrowup">跳躍</button><button data-key="arrowright">▶</button><button class="attack" data-key="enter">舌頭攻擊</button><button data-key="shift">閃避 Shift</button></div>
+</div>
+<div class="note">線上對戰：兩位玩家在各自裝置輸入相同房間代碼，並連線至已部署的 Node.js 伺服器。<br>電腦：P1 使用 A / W / D / F / G；P2 使用 ← / ↑ / → / Enter / Shift。手機／平板：使用各自的觸控按鈕。閃避有冷卻時間。雙人模式是同一台裝置本機對戰。</div>
+</main>
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');
+const keys=new Set();const pointerKeys=new Map();let online=false,netRole=0,ws=null,netHeld=new Set();let mode='versus',ended=false,round=1;let shake=0,particles=[],floatingTexts=[],pickup=null,pickupTimer=420,frame=0;let audioCtx=null;
+function sound(freq=440,duration=.07,type='sine'){try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.type=type;o.frequency.value=freq;g.gain.setValueAtTime(.055,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+duration);o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+duration)}catch(e){}}
+function burst(x,y,color='#fff1a8',n=12){for(let i=0;i<n;i++)particles.push({x,y,vx:(Math.random()-.5)*7,vy:(Math.random()-.8)*7,life:24,color,r:2+Math.random()*4})}
+function textPop(x,y,text,color='#fff'){floatingTexts.push({x,y,text,color,life:38})}
+const ground=450;
+const roster={
+ forest:{name:'森林青蛙',color:'#48c95a',belly:'#f4df70',speed:4.2,power:12,dodge:1},
+ bull:{name:'重裝牛蛙',color:'#8b9b4b',belly:'#d9c77a',speed:3.2,power:17,dodge:0.85},
+ dart:{name:'箭毒蛙',color:'#3977e8',belly:'#ffd95b',speed:5.2,power:9,dodge:1.25}
+};
+function frog(x,face,kind){const r=roster[kind]||roster.forest;return{x,y:ground-72,vx:0,vy:0,w:70,h:72,hp:100,color:'#58cf79',belly:'#fff08a',face,dir:face,attack:0,cool:0,stun:0,kind,speed:r.speed,power:r.power,dodge:r.dodge,dodgeTime:0,dodgeCool:0,aiState:'approach',aiTimer:0,damageFlash:0,boost:0}}
+let p1,p2;
+function reset(){p1=frog(170,1,document.getElementById('char1')?.value||'forest');p2=frog(730,-1,document.getElementById('char2')?.value||'forest');ended=false;particles=[];floatingTexts=[];pickup=null;pickupTimer=300;frame=0;shake=0;document.getElementById('status').textContent=mode==='versus'?'雙人對戰：開始！':'單人闖關：打敗對手！';}
+reset();
+function roundRect(x,y,w,h,r,fill,stroke){
+ ctx.beginPath();
+ if(ctx.roundRect) ctx.roundRect(x,y,w,h,r);
+ else {ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);}
+ ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=3;ctx.stroke();}
+}
+function drawFrog(p){
+ ctx.save();ctx.translate(p.x+p.w/2,p.y);ctx.scale(p.dir,1);
+ // 原第一版模型：頭、身體與腿使用重疊輪廓，避免頭部懸空
+ ctx.fillStyle='rgba(35,75,43,.20)';ctx.beginPath();ctx.ellipse(0,69,43,8,0,0,Math.PI*2);ctx.fill();
+ ctx.lineWidth=3;ctx.strokeStyle=p.damageFlash>0?'#fff':'#315c37';
+ // 腿
+ roundRect(-30,45,25,27,12,p.color,'#315c37');roundRect(7,45,25,27,12,p.color,'#315c37');
+ // 身體（上緣延伸進頭部，確保連接）
+ ctx.beginPath();ctx.ellipse(0,27,35,42,0,0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();ctx.stroke();
+ ctx.beginPath();ctx.ellipse(0,35,20,24,0,0,Math.PI*2);ctx.fillStyle=p.belly;ctx.fill();
+ // 寬扁圓頭
+ ctx.beginPath();ctx.ellipse(0,-8,46,34,0,0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();ctx.stroke();
+ // 凸起眼睛
+ for(const ex of [-25,25]){ctx.beginPath();ctx.ellipse(ex,-31,15,18,0,0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();ctx.stroke();ctx.beginPath();ctx.ellipse(ex+2,-30,5,6,0,0,Math.PI*2);ctx.fillStyle='#f4fff2';ctx.fill();ctx.stroke();ctx.beginPath();ctx.arc(ex+2,-30,2.5,0,Math.PI*2);ctx.fillStyle='#27352a';ctx.fill();}
+ // 鼻孔與呆萌微笑
+ ctx.fillStyle='#29412b';ctx.beginPath();ctx.arc(-7,-12,2,0,Math.PI*2);ctx.arc(7,-12,2,0,Math.PI*2);ctx.fill();
+ ctx.beginPath();ctx.moveTo(-25,-5);ctx.quadraticCurveTo(0,13,25,-5);ctx.strokeStyle='#29412b';ctx.lineWidth=3;ctx.stroke();
+ if(p.attack>0){ctx.strokeStyle='#ef7180';ctx.lineWidth=9;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(40,-2);ctx.quadraticCurveTo(78,-10,105,-1);ctx.stroke();ctx.fillStyle='#f78d9b';ctx.beginPath();ctx.ellipse(106,-1,9,5,0,0,Math.PI*2);ctx.fill();}
+ if(p.stun>0){ctx.fillStyle='#fff';ctx.font='bold 22px sans-serif';ctx.fillText('✦',-4,-55)}
+ ctx.restore();
+}
+function draw(){ctx.save();if(shake>0){ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);shake*=.82;if(shake<.4)shake=0}ctx.clearRect(0,0,960,540);
+let sky=ctx.createLinearGradient(0,0,0,540);sky.addColorStop(0,'#b6efad');sky.addColorStop(1,'#64ba79');ctx.fillStyle=sky;ctx.fillRect(0,0,960,540);
+ctx.fillStyle='#4d9c62';for(let i=0;i<12;i++){let x=i*90+20;ctx.beginPath();ctx.arc(x,330+(i%3)*15,70,Math.PI,0);ctx.fill()}
+for(let i=0;i<8;i++){let x=40+i*125;ctx.fillStyle=i%2?'#e87d9a':'#f5d36d';ctx.beginPath();ctx.arc(x,ground-12,12,0,7);ctx.arc(x-9,ground-19,8,0,7);ctx.arc(x+9,ground-19,8,0,7);ctx.fill();ctx.fillStyle='#f9e9c7';ctx.beginPath();ctx.arc(x,ground-12,5,0,7);ctx.fill()}
+ctx.fillStyle='#3e8952';ctx.fillRect(0,ground,960,90);ctx.fillStyle='#7ecb67';ctx.fillRect(0,ground,960,9);
+// 中央苔蘚高台：可跳上去，增加地形變化
+ctx.fillStyle='#438b50';ctx.beginPath();ctx.roundRect(385,365,190,20,9);ctx.fill();ctx.fillStyle='#83d56c';ctx.fillRect(395,365,170,5);
+if(pickup){ctx.font='30px sans-serif';ctx.textAlign='center';ctx.fillText(pickup.type==='heart'?'💚':'🪰',pickup.x,pickup.y);}
+drawFrog(p1);drawFrog(p2);
+for(const q of particles){ctx.globalAlpha=Math.max(0,q.life/24);ctx.fillStyle=q.color;ctx.beginPath();ctx.arc(q.x,q.y,q.r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}for(const t of floatingTexts){ctx.globalAlpha=Math.min(1,t.life/15);ctx.fillStyle=t.color;ctx.font='bold 22px sans-serif';ctx.textAlign='center';ctx.fillText(t.text,t.x,t.y);ctx.globalAlpha=1;}
+if(ended){ctx.fillStyle='rgba(20,50,40,.72)';ctx.fillRect(0,0,960,540);ctx.fillStyle='#fff';ctx.font='bold 48px sans-serif';ctx.textAlign='center';ctx.fillText(p1.hp<=0?(mode==='single'?'闖關失敗！':'P2 獲勝！'):(mode==='single'?'闖關成功！':'P1 獲勝！'),480,250);ctx.font='24px sans-serif';ctx.fillText('按「重新開始」再玩一場',480,300)}
+ctx.restore();document.getElementById('hp1').textContent='P1 💚 '+Math.max(0,Math.ceil(p1.hp));document.getElementById('hp2').textContent=(mode==='single'?'敵人':'P2')+' 💚 '+Math.max(0,Math.ceil(p2.hp));
+}
+function overlap(a,b){return a.x < b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y}
+function dodge(p){if(!ended&&p.dodgeCool<=0){p.dodgeTime=9;p.dodgeCool=55;p.vx=p.dir*12;p.stun=0}}
+function attack(a,b){if(a.cool<=0){a.attack=12;a.cool=35;let dist=Math.abs((a.x+a.w/2)-(b.x+b.w/2));if(dist<145&&Math.abs(a.y-b.y)<75&&b.dodgeTime<=0){b.hp-=a.power+(a.boost>0?7:0);b.vx=a.dir*7;b.vy=-3;b.stun=8;b.damageFlash=8;shake=Math.max(shake,7);burst(b.x+b.w/2,b.y+25,'#fff0a6',15);textPop(b.x+b.w/2,b.y-8,'-'+(a.power+(a.boost>0?7:0)),'#fff3a3');sound(180,.12,'square')}}}
+function move(p,left,right,jump,atk,dodgeKey,opponent){if(p.cool>0)p.cool--;if(p.attack>0)p.attack--;if(p.stun>0)p.stun--;if(p.dodgeCool>0)p.dodgeCool--;if(p.dodgeTime>0)p.dodgeTime--;if(p.damageFlash>0)p.damageFlash--;if(p.boost>0)p.boost--;if(keys.has(dodgeKey)&&!p._dodgeHeld){dodge(p);p._dodgeHeld=true}if(!keys.has(dodgeKey))p._dodgeHeld=false;
+if(!ended){if(p.stun===0){p.vx=(keys.has(left)?-p.speed:0)+(keys.has(right)?p.speed:0);if(keys.has(left))p.dir=-1;if(keys.has(right))p.dir=1;if(keys.has(jump)&&p.y>=ground-p.h-1)p.vy=-12;if(keys.has(atk))attack(p,opponent)}}
+p.vy+=.55;p.x+=p.vx;const oldY=p.y;p.y+=p.vy;if(oldY+p.h<=365&&p.y+p.h>=365&&p.x+p.w>385&&p.x<575&&p.vy>0){p.y=365-p.h;p.vy=0}else if(p.y>ground-p.h){p.y=ground-p.h;p.vy=0}p.x=Math.max(0,Math.min(960-p.w,p.x));}
+function aiUpdate(){if(mode!=='single'||ended)return;const dx=(p1.x-p2.x),dist=Math.abs(dx);p2.aiTimer--;if(p2.hp<35&&Math.random()<.045){p2.aiState='retreat';p2.aiTimer=35}else if(dist>150){p2.aiState='approach'}else if(p2.aiTimer<=0){p2.aiState=Math.random()<.22?'retreat':'attack';p2.aiTimer=20+Math.random()*35}p2.dir=dx<0?-1:1;if(p2.aiState==='approach')p2.vx=p2.dir*2.25;else if(p2.aiState==='retreat')p2.vx=-p2.dir*2.8;else p2.vx=0;if(dist<145&&Math.random()<.055)attack(p2,p1);if(Math.random()<.012&&p2.y>=ground-p2.h-1)p2.vy=-11; if(p2.aiState==='retreat'&&p2.dodgeCool<=0&&Math.random()<.04)dodge(p2)}
+function updatePickups(){frame++;if(!pickup&&--pickupTimer<=0){pickup={x:140+Math.random()*680,y:ground-22,type:Math.random()<.55?'heart':'fly'};pickupTimer=420+Math.random()*240}if(!pickup)return;for(const p of [p1,p2])if(Math.abs(p.x+p.w/2-pickup.x)<38&&Math.abs(p.y+p.h/2-pickup.y)<48){if(pickup.type==='heart'){p.hp=Math.min(100,p.hp+22);textPop(p.x+p.w/2,p.y-5,'+22 HP','#aaffad');sound(660,.12)}else{p.boost=300;textPop(p.x+p.w/2,p.y-5,'攻擊強化！','#ffe88a');sound(820,.1,'triangle')}burst(pickup.x,pickup.y,pickup.type==='heart'?'#9cffae':'#ffe88a',18);pickup=null;pickupTimer=480;break}}
+function loop(){if(!online)aiUpdate();if(!online||netRole===1)move(p1,'a','d','w','f','g',p2);else move(p1,'__remoteL','__remoteR','__remoteJ','__remoteA','__remoteD',p2);if(mode==='versus'&&(!online||netRole===2))move(p2,'arrowleft','arrowright','arrowup','enter','shift',p1);else if(online&&netRole===1)move(p2,'__remoteLeft','__remoteRight','__remoteUp','__remoteEnter','__remoteShift',p1);else {if(p2.cool>0)p2.cool--;if(p2.attack>0)p2.attack--;if(p2.stun>0)p2.stun--;if(p2.dodgeCool>0)p2.dodgeCool--;if(p2.dodgeTime>0)p2.dodgeTime--;if(p2.damageFlash>0)p2.damageFlash--;if(p2.boost>0)p2.boost--;p2.vy+=.55;const oldY=p2.y;p2.y+=p2.vy;if(oldY+p2.h<=365&&p2.y+p2.h>=365&&p2.x+p2.w>385&&p2.x<575&&p2.vy>0){p2.y=365-p2.h;p2.vy=0}else if(p2.y>ground-p2.h){p2.y=ground-p2.h;p2.vy=0}p2.x=Math.max(0,Math.min(960-p2.w,p2.x+p2.vx))}updatePickups();particles=particles.filter(q=>q.life-->0);for(const q of particles){q.x+=q.vx;q.y+=q.vy;q.vy+=.18}floatingTexts=floatingTexts.filter(t=>t.life-->0);floatingTexts.forEach(t=>t.y-=.7);if(p1.hp<=0||p2.hp<=0)ended=true;draw();requestAnimationFrame(loop)}
+window.addEventListener('keydown',e=>{let k=e.key.toLowerCase();if(['arrowleft','arrowright','arrowup','enter',' '].includes(k))e.preventDefault();if(!keys.has(k)&&(k==='g'||k==='shift')){if(k==='g')dodge(p1);else if(mode==='versus')dodge(p2)}keys.add(k)});
+window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
+document.querySelectorAll('[data-key]').forEach(b=>{const k=b.dataset.key;const on=e=>{e.preventDefault();b.setPointerCapture?.(e.pointerId);pointerKeys.set(e.pointerId,k);if(k==='g')dodge(p1);else if(k==='shift')dodge(p2);keys.add(k);if(online&&ws?.readyState===1&&isLocalKey(k))ws.send(JSON.stringify({type:'input',room:roomCode(),key:k,down:true}))},off=e=>{e.preventDefault();const held=pointerKeys.get(e.pointerId);if(held){pointerKeys.delete(e.pointerId);if(![...pointerKeys.values()].includes(held)){keys.delete(held);if(online&&ws?.readyState===1&&isLocalKey(held))ws.send(JSON.stringify({type:'input',room:roomCode(),key:held,down:false}))}}};b.addEventListener('pointerdown',on);['pointerup','pointercancel','lostpointercapture'].forEach(ev=>b.addEventListener(ev,off));});
+
+function roomCode(){return document.getElementById('roomCode').value.trim().toUpperCase()}
+function isLocalKey(k){return netRole===1?['a','d','w','f','g'].includes(k):['arrowleft','arrowright','arrowup','enter','shift'].includes(k)}
+function remoteKey(k){const map=netRole===1?{'arrowleft':'__remoteLeft','arrowright':'__remoteRight','arrowup':'__remoteUp','enter':'__remoteEnter','shift':'__remoteShift'}:{'a':'__remoteL','d':'__remoteR','w':'__remoteJ','f':'__remoteA','g':'__remoteD'};return map[k]||k}
+document.getElementById('online').onclick=()=>{
+ const room=roomCode();if(!room){document.getElementById('netStatus').textContent='請先輸入房間代碼';return}
+ const addr=prompt('輸入線上伺服器 WebSocket 位址（例如 wss://你的伺服器/ws）','ws://localhost:8080/ws');
+ if(!addr)return;
+ try{ws=new WebSocket(addr)}catch(e){document.getElementById('netStatus').textContent='連線網址錯誤';return}
+ document.getElementById('netStatus').textContent='連線中…';
+ ws.onopen=()=>ws.send(JSON.stringify({type:'join',room}));
+ ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}
+  if(m.type==='joined'){online=true;netRole=m.role;mode='versus';reset();document.getElementById('netStatus').textContent='已連線｜你是 P'+netRole;document.getElementById('status').textContent='線上房間 '+room+'｜等待／對戰中';}
+  else if(m.type==='input'&&online){const k=remoteKey(m.key);if(m.down)keys.add(k);else keys.delete(k)}
+  else if(m.type==='peer-left'){document.getElementById('netStatus').textContent='對手已離線';for(const k of netHeld)keys.delete(k);netHeld.clear()}
+  else if(m.type==='error'){document.getElementById('netStatus').textContent=m.message||'連線錯誤'}
+ };
+ ws.onclose=()=>{online=false;netRole=0;keys.clear();document.getElementById('netStatus').textContent='已斷線'};
+ ws.onerror=()=>document.getElementById('netStatus').textContent='連線失敗，請確認伺服器已啟動';
+};
+document.getElementById('single').onclick=()=>{mode='single';reset();p2.x=730};
+document.getElementById('versus').onclick=()=>{mode='versus';reset()};
+document.getElementById('restart').onclick=reset;document.getElementById('char1').onchange=reset;document.getElementById('char2').onchange=reset;
+loop();
+</script>
+</body></html>
