@@ -98,7 +98,7 @@ function isLocalKey(k){return netRole===1?['a','d','w','f','g'].includes(k):['ar
 function remoteKey(k){const map=netRole===1?{'arrowleft':'__remoteLeft','arrowright':'__remoteRight','arrowup':'__remoteUp','enter':'__remoteEnter','shift':'__remoteShift'}:{'a':'__remoteL','d':'__remoteR','w':'__remoteJ','f':'__remoteA','g':'__remoteD'};return map[k]||k}
 document.getElementById('online').onclick=()=>{
  const room=roomCode();if(!room){document.getElementById('netStatus').textContent='請先輸入房間代碼';return}
- const addr=prompt('輸入線上伺服器 WebSocket 位址（例如 wss://你的伺服器/ws）','ws://localhost:8080/ws');
+ const 地址 = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
  if(!addr)return;
  try{ws=new WebSocket(addr)}catch(e){document.getElementById('netStatus').textContent='連線網址錯誤';return}
  document.getElementById('netStatus').textContent='連線中…';
