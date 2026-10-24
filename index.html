@@ -89,8 +89,39 @@ p.vy+=.55;p.x+=p.vx;const oldY=p.y;p.y+=p.vy;if(oldY+p.h<=365&&p.y+p.h>=365&&p.x
 function aiUpdate(){if(mode!=='single'||ended)return;const dx=(p1.x-p2.x),dist=Math.abs(dx);p2.aiTimer--;if(p2.hp<35&&Math.random()<.045){p2.aiState='retreat';p2.aiTimer=35}else if(dist>150){p2.aiState='approach'}else if(p2.aiTimer<=0){p2.aiState=Math.random()<.22?'retreat':'attack';p2.aiTimer=20+Math.random()*35}p2.dir=dx<0?-1:1;if(p2.aiState==='approach')p2.vx=p2.dir*2.25;else if(p2.aiState==='retreat')p2.vx=-p2.dir*2.8;else p2.vx=0;if(dist<145&&Math.random()<.055)attack(p2,p1);if(Math.random()<.012&&p2.y>=ground-p2.h-1)p2.vy=-11; if(p2.aiState==='retreat'&&p2.dodgeCool<=0&&Math.random()<.04)dodge(p2)}
 function updatePickups(){frame++;if(!pickup&&--pickupTimer<=0){pickup={x:140+Math.random()*680,y:ground-22,type:Math.random()<.55?'heart':'fly'};pickupTimer=420+Math.random()*240}if(!pickup)return;for(const p of [p1,p2])if(Math.abs(p.x+p.w/2-pickup.x)<38&&Math.abs(p.y+p.h/2-pickup.y)<48){if(pickup.type==='heart'){p.hp=Math.min(100,p.hp+22);textPop(p.x+p.w/2,p.y-5,'+22 HP','#aaffad');sound(660,.12)}else{p.boost=300;textPop(p.x+p.w/2,p.y-5,'攻擊強化！','#ffe88a');sound(820,.1,'triangle')}burst(pickup.x,pickup.y,pickup.type==='heart'?'#9cffae':'#ffe88a',18);pickup=null;pickupTimer=480;break}}
 function loop(){if(!online)aiUpdate();if(!online||netRole===1)move(p1,'a','d','w','f','g',p2);else move(p1,'__remoteL','__remoteR','__remoteJ','__remoteA','__remoteD',p2);if(mode==='versus'&&(!online||netRole===2))move(p2,'arrowleft','arrowright','arrowup','enter','shift',p1);else if(online&&netRole===1)move(p2,'__remoteLeft','__remoteRight','__remoteUp','__remoteEnter','__remoteShift',p1);else {if(p2.cool>0)p2.cool--;if(p2.attack>0)p2.attack--;if(p2.stun>0)p2.stun--;if(p2.dodgeCool>0)p2.dodgeCool--;if(p2.dodgeTime>0)p2.dodgeTime--;if(p2.damageFlash>0)p2.damageFlash--;if(p2.boost>0)p2.boost--;p2.vy+=.55;const oldY=p2.y;p2.y+=p2.vy;if(oldY+p2.h<=365&&p2.y+p2.h>=365&&p2.x+p2.w>385&&p2.x<575&&p2.vy>0){p2.y=365-p2.h;p2.vy=0}else if(p2.y>ground-p2.h){p2.y=ground-p2.h;p2.vy=0}p2.x=Math.max(0,Math.min(960-p2.w,p2.x+p2.vx))}updatePickups();particles=particles.filter(q=>q.life-->0);for(const q of particles){q.x+=q.vx;q.y+=q.vy;q.vy+=.18}floatingTexts=floatingTexts.filter(t=>t.life-->0);floatingTexts.forEach(t=>t.y-=.7);if(p1.hp<=0||p2.hp<=0)ended=true;draw();requestAnimationFrame(loop)}
-window.addEventListener('keydown',e=>{let k=e.key.toLowerCase();if(['arrowleft','arrowright','arrowup','enter',' '].includes(k))e.preventDefault();if(!keys.has(k)&&(k==='g'||k==='shift')){if(k==='g')dodge(p1);else if(mode==='versus')dodge(p2)}keys.add(k)});
-window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (['arrowleft', 'arrowright', 'arrowup', 'enter', ' '].includes(k)) e.preventDefault();
+
+  if (!keys.has(k)) {
+    if (k === 'g') dodge(p1);
+    else if (k === 'shift' && mode === 'versus') dodge(p2);
+
+    if (online && ws?.readyState === 1 && isLocalKey(k)) {
+      ws.send(JSON.stringify({
+        type: 'input',
+        room: roomCode(),
+        key: k,
+        down: true
+      }));
+    }
+  }
+  keys.add(k);
+});
+
+window.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  keys.delete(k);
+
+  if (online && ws?.readyState === 1 && isLocalKey(k)) {
+    ws.send(JSON.stringify({
+      type: 'input',
+      room: roomCode(),
+      key: k,
+      down: false
+    }));
+  }
+});
 document.querySelectorAll('[data-key]').forEach(b=>{const k=b.dataset.key;const on=e=>{e.preventDefault();b.setPointerCapture?.(e.pointerId);pointerKeys.set(e.pointerId,k);if(k==='g')dodge(p1);else if(k==='shift')dodge(p2);keys.add(k);if(online&&ws?.readyState===1&&isLocalKey(k))ws.send(JSON.stringify({type:'input',room:roomCode(),key:k,down:true}))},off=e=>{e.preventDefault();const held=pointerKeys.get(e.pointerId);if(held){pointerKeys.delete(e.pointerId);if(![...pointerKeys.values()].includes(held)){keys.delete(held);if(online&&ws?.readyState===1&&isLocalKey(held))ws.send(JSON.stringify({type:'input',room:roomCode(),key:held,down:false}))}}};b.addEventListener('pointerdown',on);['pointerup','pointercancel','lostpointercapture'].forEach(ev=>b.addEventListener(ev,off));});
 
 function roomCode(){return document.getElementById('roomCode').value.trim().toUpperCase()}
